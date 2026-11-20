@@ -1,5 +1,7 @@
 # 🚗 TrafficVision — YOLO Vehicle Detection & Speed Estimation
 
+**🔴 Live demo:** [https://trafficvision-yolo-speed-o2eyxmetrbbdxydilvzcjb.streamlit.app/](https://trafficvision-yolo-speed-o2eyxmetrbbdxydilvzcjb.streamlit.app/)
+
 A small end-to-end computer-vision product:
 
 1. **Dataset** — Roboflow-exported CCTV traffic images (UA-DETRAC) in YOLOv8 format, 4 classes: `car`, `bus`, `truck`, `van`.
