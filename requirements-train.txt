@@ -1,0 +1,9 @@
+# Training-only dependencies (not needed on Streamlit Community Cloud).
+# Install the CPU build of torch first when running without a GPU:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+ultralytics>=8.3
+onnx>=1.16
+onnxsim>=0.4
+opencv-python-headless>=4.9
+Pillow>=10
+requests>=2.31

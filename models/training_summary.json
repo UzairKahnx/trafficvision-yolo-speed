@@ -1,0 +1,13 @@
+{
+  "map50_95": 0.6141,
+  "map50": 0.7875,
+  "per_class_map50_95": [
+    0.8955,
+    0.5583,
+    0.5167,
+    0.4858
+  ],
+  "epochs": 25,
+  "imgsz": 416,
+  "dataset": "Roboflow UA-DETRAC CCTV vehicles (YOLOv8 export, 4 classes)"
+}

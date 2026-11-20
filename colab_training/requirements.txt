@@ -1,0 +1,5 @@
+ultralytics>=8.4
+onnx>=1.16
+onnxsim>=0.4
+opencv-python>=4.9
+pandas>=2.0

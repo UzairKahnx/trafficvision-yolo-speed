@@ -1,0 +1,6 @@
+path: dataset
+train: train/images
+val: val/images
+nc: 4
+# Corrected order: id 1 is car (82% of boxes), id 0 is bus.
+names: [bus, car, truck, van]
