@@ -7,7 +7,9 @@ Run locally:
 from __future__ import annotations
 
 import io
+import math
 import tempfile
+import zipfile
 from pathlib import Path
 
 import cv2
@@ -57,6 +59,60 @@ def make_gif(frames_rgb: list[np.ndarray], duration_ms: int) -> io.BytesIO:
     return buffer
 
 
+def read_yolo_boxes(text: str, width: int, height: int) -> list[tuple[int, float, float, float, float]]:
+    """Parse YOLO normalized label text into (class, x1, y1, x2, y2) boxes."""
+    boxes = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        try:
+            cls = int(float(parts[0]))
+            cx, cy, bw, bh = map(float, parts[1:5])
+        except ValueError:
+            continue
+        boxes.append(
+            (cls, (cx - bw / 2) * width, (cy - bh / 2) * height,
+             (cx + bw / 2) * width, (cy + bh / 2) * height)
+        )
+    return boxes
+
+
+def box_iou(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def collect_test_files(uploads) -> tuple[list[tuple[str, bytes]], dict[str, str]]:
+    """Expand uploads (images or ZIP archives) into images and optional YOLO labels."""
+    images: list[tuple[str, bytes]] = []
+    labels: dict[str, str] = {}
+    for upload in uploads:
+        name, data = upload.name, upload.getvalue()
+        lower = name.lower()
+        if lower.endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for member in zf.namelist():
+                        if member.endswith("/"):
+                            continue
+                        mlow = member.lower()
+                        if mlow.endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")):
+                            images.append((Path(member).name, zf.read(member)))
+                        elif mlow.endswith(".txt"):
+                            labels[Path(member).stem] = zf.read(member).decode("utf-8", errors="ignore")
+            except zipfile.BadZipFile:
+                st.warning(f"Could not read archive: {name}")
+        elif lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")):
+            images.append((name, data))
+    return images[:200], labels
+
+
 st.title("🚗 TrafficVision — Vehicle Detection & Speed Estimation")
 st.markdown(
     "Fine-tuned **YOLOv8n** (Roboflow / UA-DETRAC CCTV vehicles) detects "
@@ -86,7 +142,9 @@ with st.sidebar:
         "(car 4.5 m, van 5 m, bus 12 m, truck 8.5 m) as a scale reference."
     )
 
-image_tab, video_tab = st.tabs(["📷 Image detection", "🎬 Video speed estimation"])
+image_tab, video_tab, test_tab = st.tabs(
+    ["📷 Image detection", "🎬 Video speed estimation", "🧪 Test your data"]
+)
 
 # ---------------------------------------------------------------------------
 # Image mode
@@ -236,3 +294,129 @@ with video_tab:
                     st.info("No track yet has enough frames for a reliable speed estimate.")
     else:
         st.info("Upload a short traffic video to see tracking and speed estimates.")
+
+# ---------------------------------------------------------------------------
+# Batch test mode
+# ---------------------------------------------------------------------------
+with test_tab:
+    st.subheader("Batch-test the detector on your own data")
+    st.caption(
+        "Upload individual images or a **.zip** archive. If the archive also contains "
+        "YOLO **.txt** labels, precision / recall at IoU 0.5 is computed automatically."
+    )
+    test_uploads = st.file_uploader(
+        "Images or a .zip archive (up to 200 images)",
+        type=["jpg", "jpeg", "png", "webp", "bmp", "zip"],
+        accept_multiple_files=True,
+        key="test_upload",
+    )
+    run_test = st.button("Run batch test", type="primary", use_container_width=True)
+
+    if run_test:
+        if not test_uploads:
+            st.info("Choose at least one image or a .zip archive first.")
+        else:
+            images, labels = collect_test_files(test_uploads)
+            if not images:
+                st.error("No supported images found in your upload.")
+            else:
+                detections_rows: list[dict] = []
+                previews: list[tuple[str, np.ndarray]] = []
+                eval_stats: dict[str, dict[str, int]] = {
+                    name: {"tp": 0, "fp": 0, "fn": 0} for name in detector.names.values()
+                }
+                progress = st.progress(0.0)
+                for index, (image_name, image_bytes) in enumerate(images):
+                    frame = decode_image(image_bytes)
+                    if frame is None:
+                        continue
+                    height, width = frame.shape[:2]
+                    detections = detector.detect(frame, confidence, iou_threshold)
+                    for det in detections:
+                        detections_rows.append(
+                            {
+                                "Image": image_name,
+                                "Class": det.label,
+                                "Confidence": round(det.confidence, 3),
+                                "x1": round(det.x1), "y1": round(det.y1),
+                                "x2": round(det.x2), "y2": round(det.y2),
+                            }
+                        )
+                    if len(previews) < 12:
+                        previews.append((image_name, to_rgb(annotate(frame, detections))))
+
+                    if labels:
+                        ground_truth = read_yolo_boxes(
+                            labels.get(Path(image_name).stem, ""), width, height
+                        )
+                        used: set[int] = set()
+                        for det in detections:
+                            best_iou, best_index = 0.0, -1
+                            for box_index, box in enumerate(ground_truth):
+                                if box_index in used or detector.names.get(box[0]) != det.label:
+                                    continue
+                                score = box_iou((det.x1, det.y1, det.x2, det.y2), box[1:])
+                                if score > best_iou:
+                                    best_iou, best_index = score, box_index
+                            if best_iou >= 0.5:
+                                eval_stats[det.label]["tp"] += 1
+                                used.add(best_index)
+                            else:
+                                eval_stats[det.label]["fp"] += 1
+                        for box_index, box in enumerate(ground_truth):
+                            if box_index not in used:
+                                label = detector.names.get(box[0], str(box[0]))
+                                eval_stats.setdefault(label, {"tp": 0, "fp": 0, "fn": 0})["fn"] += 1
+                    progress.progress((index + 1) / len(images))
+                progress.empty()
+
+                st.success(f"Processed {len(images)} image(s) — {len(detections_rows)} detections")
+                col_images, col_dets, col_avg = st.columns(3)
+                col_images.metric("Images", len(images))
+                col_dets.metric("Detections", len(detections_rows))
+                col_avg.metric("Avg / image", round(len(detections_rows) / len(images), 1))
+
+                results_df = pd.DataFrame(detections_rows)
+                if not results_df.empty:
+                    st.bar_chart(results_df["Class"].value_counts())
+                    st.dataframe(results_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "Download detections (CSV)",
+                        data=results_df.to_csv(index=False).encode("utf-8"),
+                        file_name="trafficvision_detections.csv",
+                        mime="text/csv",
+                    )
+                    st.subheader("Annotated samples")
+                    preview_columns = st.columns(3)
+                    for index, (image_name, rgb) in enumerate(previews):
+                        with preview_columns[index % 3]:
+                            st.image(rgb, use_container_width=True, caption=image_name[:40])
+                else:
+                    st.info("No vehicles detected. Try lowering the confidence slider.")
+
+                if labels:
+                    st.subheader("Accuracy on your labelled data (IoU ≥ 0.5)")
+                    accuracy_rows = []
+                    for label, stats in eval_stats.items():
+                        tp, fp, fn = stats["tp"], stats["fp"], stats["fn"]
+                        if tp + fp + fn == 0:
+                            continue
+                        precision = tp / (tp + fp) if tp + fp else 0.0
+                        recall = tp / (tp + fn) if tp + fn else 0.0
+                        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+                        accuracy_rows.append(
+                            {
+                                "Class": label, "TP": tp, "FP": fp, "FN": fn,
+                                "Precision": round(precision, 3),
+                                "Recall": round(recall, 3),
+                                "F1": round(f1, 3),
+                            }
+                        )
+                    accuracy_df = pd.DataFrame(accuracy_rows)
+                    st.dataframe(accuracy_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "Download accuracy (CSV)",
+                        data=accuracy_df.to_csv(index=False).encode("utf-8"),
+                        file_name="trafficvision_accuracy.csv",
+                        mime="text/csv",
+                    )

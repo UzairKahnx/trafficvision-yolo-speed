@@ -5,7 +5,7 @@ A small end-to-end computer-vision product:
 1. **Dataset** — Roboflow-exported CCTV traffic images (UA-DETRAC) in YOLOv8 format, 4 classes: `car`, `bus`, `truck`, `van`.
 2. **Training** — `yolov8n.pt` fine-tuned with Ultralytics for 25 epochs on CPU.
 3. **Evaluation** — mAP on a held-out split plus a prediction contact sheet.
-4. **App** — Streamlit UI with image upload, confidence slider, bounding boxes, detection table, and a video mode that tracks vehicles and estimates speed in km/h.
+4. **App** — Streamlit UI with image upload, confidence slider, bounding boxes, detection table, a video mode that tracks vehicles and estimates speed in km/h, and a **Test your data** tab for batch-testing uploaded images/ZIPs (with optional YOLO-label accuracy scoring and CSV downloads).
 5. **Deployment** — ready for Streamlit Community Cloud (ONNX inference keeps the cloud dependency list small).
 
 ---
@@ -76,6 +76,8 @@ streamlit run streamlit_app.py
 **Image tab:** upload an image (or use the bundled sample), adjust the confidence slider, see boxes + labels and a table of detections with confidence scores.
 
 **Video tab:** upload a short video. The app samples frames, tracks each vehicle, and estimates speed from pixel displacement using the vehicle's apparent width and a typical physical length as scale. Overspeeding relative to the configurable limit is flagged. The estimate is a monocular approximation — a calibrated camera and a known reference distance give more accurate results.
+
+**Test your data tab:** upload multiple images or one `.zip` archive (up to 200 images) to batch-test the detector. If the archive also contains YOLO `.txt` labels, the tab reports per-class precision / recall / F1 at IoU 0.5. Detection and accuracy results can be downloaded as CSV files, and annotated samples are shown as a gallery.
 
 ---
 
